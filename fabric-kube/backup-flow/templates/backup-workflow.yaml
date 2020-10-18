@@ -1,4 +1,4 @@
-{{- $backupKey := (not .Values.backup.key) | ternary (now | htmlDate) .Values.backup.key }} 
+{{- $backupKey := (not .Values.backup.key) | ternary (now | htmlDate) .Values.backup.key }}
 
 
 apiVersion: argoproj.io/v1alpha1
@@ -11,7 +11,7 @@ spec:
   templates:
   - name: backup
     steps:
-    - 
+    -
 # top level: peer/orderer
     {{- if or $.Values.flow.peer.backup.enabled $.Values.flow.couchdb.backup.enabled }}
       - name: backup-peers
@@ -21,12 +21,12 @@ spec:
       - name: backup-orderers
         template: backup-orderers
     {{- end }}
-    
+
 # second level: peers
 {{- if or $.Values.flow.peer.backup.enabled $.Values.flow.couchdb.backup.enabled }}
   - name: backup-peers
-    steps: 
-    - 
+    steps:
+    -
 {{- range $i, $org := .Values.PeerOrgs }}
 {{- range $peerIndex := until ($org.Template.Count | int) }}
 {{- $peer := (printf "peer%s" ($peerIndex | toString)) }}
@@ -42,11 +42,11 @@ spec:
 {{- if $.Values.flow.orderer.backup.enabled }}
 
   - name: backup-orderers
-    steps: 
-    - 
+    steps:
+    -
 {{- range $i, $org := .Values.OrdererOrgs }}
 {{- range $i, $host := $org.Specs }}
-{{- range $orderer := until ($.Values.flow.orderer.replicas | int) }} 
+{{- range $orderer := until ($.Values.flow.orderer.replicas | int) }}
 
       - name: backup-orderer--{{ $org.Name | lower }}--{{ $host.Hostname | lower }}--{{ $orderer }}
         template: backup-orderer--{{ $org.Name | lower }}--{{ $host.Hostname | lower }}--{{ $orderer }}
@@ -122,7 +122,7 @@ spec:
       artifacts:
       - name: peer-backup
         path: /hlf-backup/
-          
+
 
 {{- end }} {{- /* Peers */ -}}
 {{- end }} {{- /* Orgs */ -}}
@@ -145,20 +145,42 @@ spec:
     retryStrategy:
       limit: {{ $.Values.retryCount }}
 
-    container:
+{{- if eq $.Values.backup.target.type "azureBlobStorage" }}
 
-{{- if eq $.Values.backup.target.type "azureBlobStorage" }}    
+    container:
       image: microsoft/azure-cli:latest
       command: ["sh", "-c", "az storage blob upload-batch \
                              --source /hlf-backup/ \
                              --destination-path {{ $backupKey }}/PeerOrgs/{{ $org.Name }}/{{ $peer }} \
-                             --account-name {{ required "backup.target.azureBlobStorage.accountName is required!" $.Values.backup.target.azureBlobStorage.accountName }} \ 
+                             --account-name {{ required "backup.target.azureBlobStorage.accountName is required!" $.Values.backup.target.azureBlobStorage.accountName }} \
                              --destination {{ required "backup.target.azureBlobStorage.destination is required!" $.Values.backup.target.azureBlobStorage.destination }} \
                              "]
       env:
         - name: AZURE_STORAGE_KEY
           value: {{ required "backup.target.azureBlobStorage.accessKey is required!" $.Values.backup.target.azureBlobStorage.accessKey }}
-{{- end }}
+
+{{- else if eq $.Values.backup.target.type "awsS3" }}
+
+    container:
+      image: amazon/aws-cli:latest
+      command: ["sh", "-c", "aws s3 cp \
+                             --recursive \
+                             /hlf-backup/ \
+                             s3://\
+                             {{ required "backup.target.awsS3.bucketName is required!" $.Values.backup.target.awsS3.bucketName }}\
+                             /{{ $backupKey }}/PeerOrgs/{{ $org.Name }}/{{ $peer }}/ \
+                             "]
+      env:
+        - name: AWS_DEFAULT_REGION
+          value: {{ required "backup.target.awsS3.region is required!" $.Values.backup.target.awsS3.region }}
+        - name: AWS_ACCESS_KEY_ID
+          value: {{ required "backup.target.awsS3.accessKeyId is required!" $.Values.backup.target.awsS3.accessKeyId }}
+        - name: AWS_SECRET_ACCESS_KEY
+          value: {{ required "backup.target.awsS3.secretAccessKey is required!" $.Values.backup.target.awsS3.secretAccessKey }}
+
+{{- else }}
+  {{ fail (printf "Uknown backup.target.type: %s" $.Values.backup.target.type ) }}
+{{- end }} {{- /* backup.target.type */ -}}{{""}}
 
 {{- end }} {{- /* Peers */ -}}
 {{- end }} {{- /* Orgs */ -}}
@@ -188,7 +210,7 @@ spec:
       artifacts:
       - name: orderer-backup
         path: /hlf-backup/
-          
+
 
 {{- end }} {{- /* orderer */ -}}
 {{- end }} {{- /* org.Specs */ -}}
@@ -215,18 +237,40 @@ spec:
 
     container:
 
-{{- if eq $.Values.backup.target.type "azureBlobStorage" }}    
+{{- if eq $.Values.backup.target.type "azureBlobStorage" }}
+
       image: microsoft/azure-cli:latest
       command: ["sh", "-c", "az storage blob upload-batch \
                              --source /hlf-backup/ \
                              --destination-path {{ $backupKey }}/OrdererOrgs/{{ $org.Name }}/{{ $host.Hostname }}/{{ $orderer }} \
-                             --account-name {{ required "backup.target.azureBlobStorage.accountName is required!" $.Values.backup.target.azureBlobStorage.accountName }} \ 
+                             --account-name {{ required "backup.target.azureBlobStorage.accountName is required!" $.Values.backup.target.azureBlobStorage.accountName }} \
                              --destination {{ required "backup.target.azureBlobStorage.destination is required!" $.Values.backup.target.azureBlobStorage.destination }} \
                              "]
       env:
         - name: AZURE_STORAGE_KEY
           value: {{ required "backup.target.azureBlobStorage.accessKey is required!" $.Values.backup.target.azureBlobStorage.accessKey }}
-{{- end }}
+
+{{- else if eq $.Values.backup.target.type "awsS3" }}
+
+      image: amazon/aws-cli:latest
+      command: ["sh", "-c", "aws s3 cp \
+                             --recursive \
+                             /hlf-backup/ \
+                             s3://\
+                             {{ required "backup.target.awsS3.bucketName is required!" $.Values.backup.target.awsS3.bucketName }}\
+                             /{{ $backupKey }}/OrdererOrgs/{{ $org.Name }}/{{ $host.Hostname }}/{{ $orderer }}/ \
+                             "]
+      env:
+        - name: AWS_DEFAULT_REGION
+          value: {{ required "backup.target.awsS3.region is required!" $.Values.backup.target.awsS3.region }}
+        - name: AWS_ACCESS_KEY_ID
+          value: {{ required "backup.target.awsS3.accessKeyId is required!" $.Values.backup.target.awsS3.accessKeyId }}
+        - name: AWS_SECRET_ACCESS_KEY
+          value: {{ required "backup.target.awsS3.secretAccessKey is required!" $.Values.backup.target.awsS3.secretAccessKey }}
+
+{{- else }}
+  {{ fail (printf "Uknown backup.target.type: %s" $.Values.backup.target.type ) }}
+{{- end }} {{- /* backup.target.type */ -}}{{""}}
 
 {{- end }} {{- /* orderer */ -}}
 {{- end }} {{- /* org.Specs */ -}}
